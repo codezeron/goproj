@@ -5,6 +5,9 @@ import (
 	"log"
 	"net/http"
 
+	"github.com/codezeron/apigo/services/cart"
+	"github.com/codezeron/apigo/services/order"
+	"github.com/codezeron/apigo/services/product"
 	"github.com/codezeron/apigo/services/user"
 	"github.com/gorilla/mux"
 )
@@ -30,6 +33,21 @@ func (s *APIServer) Run() error {
 	userStore := user.NewStore(s.db)
 	userHandler := user.NewHandler(userStore)
 	userHandler.RegisterRoutes(subrouter)
+
+	//registrando endpoints de product
+	productStore := product.NewStore(s.db)
+	productHandler := product.NewHandler(productStore, userStore)
+	productHandler.RegisterRoutes(subrouter)
+
+	//registrando endpoints de order
+	orderStore := order.NewStore(s.db)
+	//registrando endpoints de cart
+
+	cartHandler := cart.NewHandler(productStore, orderStore, userStore)
+	cartHandler.RegisterRoutes(subrouter)
+
+	// Serve static files
+	router.PathPrefix("/").Handler(http.FileServer(http.Dir("static")))
 
 	log.Println("Server running: ", s.addr)
 	return http.ListenAndServe(s.addr, router)

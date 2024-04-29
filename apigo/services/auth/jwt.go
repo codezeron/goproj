@@ -1,12 +1,22 @@
 package auth
 
 import (
+	"context"
+	"fmt"
+	"log"
+	"net/http"
 	"strconv"
 	"time"
 
-	"github.com/golang-jwt/jwt/v5"
 	"github.com/codezeron/apigo/config"
+	"github.com/codezeron/apigo/types"
+	"github.com/codezeron/apigo/utils"
+	"github.com/golang-jwt/jwt/v5"
 )
+
+type contextKey string
+
+const UserKey contextKey = "userID"
 
 func CreateJWT(secret []byte, userID int) (string, error) {
 
@@ -22,4 +32,76 @@ func CreateJWT(secret []byte, userID int) (string, error) {
 		return "", err
 	}
 	return tokesString, nil
+}
+
+func WithJWTAuth(handlerFunc http.HandlerFunc, store types.UserStore) http.HandlerFunc{
+	return func(w http.ResponseWriter, r *http.Request){
+		//get the token from the user request
+		tokenString := getTokenFromRequest(r)
+
+		//validate JWT
+		token, err := validateToken(tokenString)
+		if err != nil {
+			log.Printf("failed to validate token: %v", err)
+			permissionDenied(w)
+			return
+		}
+
+		if !token.Valid{
+			log.Println("invalid token")
+			permissionDenied(w)
+			return
+		}
+		//if is needed to fetch the userID from DB (id for the token)
+		claims := token.Claims.(jwt.MapClaims)
+		str := claims["userID"].(string)
+
+		userID, _:= strconv.Atoi(str)
+
+		u, err := store.GetUserByID(userID)
+		if err!= nil {
+			log.Printf("failed to get user by id: %v", err)
+			permissionDenied(w)
+			return
+		}
+		//set context "userID" to user ID
+		ctx := r.Context()
+		ctx = context.WithValue(ctx, UserKey, u.ID)
+		r = r.WithContext(ctx)
+
+		handlerFunc(w, r)
+	}
+}
+
+// ValidateToken takes a JWT string and returns a JWT token and any errors
+func validateToken(tokenString string) (*jwt.Token, error) {
+    return jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+        // Verify that the token method is HMAC
+        if _, ok := token.Method.(*jwt.SigningMethodHMAC);!ok {
+            return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+        }
+        // Return the secret key
+        return []byte(config.Envies.JWTSecret), nil
+    })
+}
+
+func getTokenFromRequest(r *http.Request) string {
+	tokenString := r.Header.Get("Authorization")
+	if tokenString != "" {
+    return tokenString
+  }
+	return ""
+}
+
+func permissionDenied(w http.ResponseWriter){
+	utils.WriteError(w, http.StatusUnauthorized, fmt.Errorf("permission denied"))
+}
+
+func GetUserIDFromContext(ctx context.Context) int {
+	userID, ok := ctx.Value(UserKey).(int)
+	if !ok {
+		return -1
+	}
+
+	return userID
 }
